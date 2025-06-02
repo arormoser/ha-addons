@@ -7,7 +7,7 @@ COPY . /
 RUN chmod a+x /run.sh
 RUN chmod a+x /finish.sh
 
-RUN npm install -f
+RUN rm -rf node_modules package-lock.json && npm install -f
 
 EXPOSE 3000
 CMD [ "/run.sh" ]
