@@ -1,11 +1,10 @@
 const EventEmitter = require("eventemitter2");
-
-const makeWASocket = require("./Baileys").default;
 const {
+  default: makeWASocket,
   DisconnectReason,
   useMultiFileAuthState,
   fetchLatestBaileysVersion,
-} = require("./Baileys");
+} = require("@whiskeysockets/baileys");
 
 const MessageType = {
   text: "conversation",
@@ -16,6 +15,9 @@ const MessageType = {
   document: "documentMessage",
   contact: "contactMessage",
 };
+
+const logger = require("log4js").getLogger();
+logger.level = "info";
 
 class WhatsappClient extends EventEmitter {
   #conn;
@@ -141,12 +143,30 @@ class WhatsappClient extends EventEmitter {
     if (this.#offline) this.setSendPresenceUpdateInterval("unavailable");
 
     this.#conn.ev.on("messages.upsert", async ({ messages }) => {
+      console.log('MENSAJE CRUDO', JSON.stringify(event, null, 2)); // LOGUEA TODO
       const msg = messages[0];
 
       if (msg.hasOwnProperty("message") && !msg.key.fromMe) {
         delete msg.message.messageContextInfo;
         const messageType = Object.keys(msg.message)[0];
-        this.emit("msg", { type: messageType, ...msg });
+
+        // Aca normalizá para que SIEMPRE tenga msg.payload.text
+        let payloadText = "";
+        if (msg.message?.conversation) {
+          payloadText = msg.message.conversation;
+        } else if (msg.message?.extendedTextMessage?.text) {
+          payloadText = msg.message.extendedTextMessage.text;
+        } else if (msg.message?.ephemeralMessage?.message?.extendedTextMessage?.text) {
+          payloadText = msg.message.ephemeralMessage.message.extendedTextMessage.text;
+        } else {
+          payloadText = ""; // Ponelo vacio si no hay texto
+        }
+
+        this.emit("msg", {
+          type: messageType,
+          payload: { text: payloadText },
+          ...msg
+        });
       }
     });
 
@@ -198,6 +218,8 @@ class WhatsappClient extends EventEmitter {
   };
 
   sendMessage = async (phone, msg, options) => {
+    logger.info("Entro a sendMessage whatsapp.js 1");
+    logger.info("Enviando mensaje con params:", phone, msg, options);
     phone = phone.toString();
     if (this.#status.disconnected || !this.#status.connected) {
       throw new WhatsappDisconnectedError();
@@ -214,11 +236,13 @@ class WhatsappClient extends EventEmitter {
       phone.endsWith("@broadcast")
     ) {
       try {
+        logger.info("Entro a sendMessage whatsapp.js 2");
         return await this.#conn.sendMessage(id, msg, options);
       } catch (err) {
         throw new WhatsappError(err.output.payload.statusCode);
       }
     }
+    logger.info("Entro a sendMessage whatsapp.js 3");
 
     throw new WhatsappNumberNotFoundError(phone);
   };
