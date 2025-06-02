@@ -7,6 +7,8 @@ const { WhatsappClient } = require("./whatsapp");
 
 var logger = require("log4js").getLogger();
 logger.level = "info";
+console.log('INDEX VERSION:', Date.now());
+console.log('BAILEYS VERSION:', require('@whiskeysockets/baileys/package.json').version);
 
 var qrimage = require("qr-image");
 
@@ -122,9 +124,9 @@ fs.readFile("data/options.json", function (error, content) {
         const wapp = clients[message.clientId];
         wapp
           .sendMessage(
-          message.to,
-          message.body,
-          message.options
+            message.to,
+            { text: message.body }, // <-- ACA EL CAMBIO
+            message.options
           )
           .then(() => {
             res.send("OK");
