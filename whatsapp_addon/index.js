@@ -9,6 +9,7 @@ var logger = require("log4js").getLogger();
 logger.level = "info";
 console.log('INDEX VERSION:', Date.now());
 console.log('BAILEYS VERSION:', require('@whiskeysockets/baileys/package.json').version);
+console.log('NODE VERSION:', process.version);
 
 var qrimage = require("qr-image");
 
