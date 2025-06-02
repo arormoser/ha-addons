@@ -122,6 +122,12 @@ fs.readFile("data/options.json", function (error, content) {
     if (message.hasOwnProperty("clientId")) {
       if (clients.hasOwnProperty(message.clientId)) {
         const wapp = clients[message.clientId];
+        logger.info("Entro a sendMessage 21");
+        logger.info("to:", message.to);
+        logger.info("body:", message.body);
+        logger.info("options:", message.options);
+        console.log('PAYLOAD RECIBIDO:', JSON.stringify(message));
+        console.log('TIPO:', typeof message.body);                
         wapp
           .sendMessage(
             message.to,
