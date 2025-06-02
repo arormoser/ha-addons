@@ -123,7 +123,7 @@ fs.readFile("data/options.json", function (error, content) {
         wapp
           .sendMessage(
           message.to,
-          { text: message.body },
+          message.body,
           message.options
           )
           .then(() => {
