@@ -146,11 +146,7 @@ class WhatsappClient extends EventEmitter {
       if (msg.hasOwnProperty("message") && !msg.key.fromMe) {
         delete msg.message.messageContextInfo;
         const messageType = Object.keys(msg.message)[0];
-        this.emit("msg", {
-          type: messageType,
-          payload: { text: payloadText },
-          ...msg
-        });
+        this.emit("msg", { type: messageType, ...msg });
       }
     });
 
