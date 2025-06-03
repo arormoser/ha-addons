@@ -15,6 +15,7 @@ app.post("/sendMessage", async (req, res) => {
     // Reenvía a tu Node
     const r = await axios.post(LOCAL_NODE_URL, req.body);
 
+    console.log("Resultado post:", r.status + " " + r.data);
     // Devuelve el resultado a HA
     res.status(r.status).send(r.data);
   } catch (err) {
