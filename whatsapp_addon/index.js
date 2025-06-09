@@ -8,15 +8,19 @@ app.use(bodyParser.json());
 const LOCAL_NODE_URL = "http://frigate.local:3000/sendMessage"; // Cambia esto por la IP de tu server Node
 
 app.post("/sendMessage", async (req, res) => {
+  const { to } = req.body;
+
+  if (!to || to.trim() === "") {
+    console.error("❌ No se especificó teléfono destino");
+    return res.status(400).send({ error: "No se especificó teléfono destino" });
+  }
+
   try {
-    // Opcional: loguea el request
     console.log("Proxy recibiendo:", req.body);
 
-    // Reenvía a tu Node
     const r = await axios.post(LOCAL_NODE_URL, req.body);
 
     console.log("Resultado post:", r.status + " " + r.data);
-    // Devuelve el resultado a HA
     res.status(r.status).send(r.data);
   } catch (err) {
     console.error("Proxy error:", err.message);
