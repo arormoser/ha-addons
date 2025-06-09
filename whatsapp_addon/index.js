@@ -20,6 +20,15 @@ app.post("/sendMessage", async (req, res) => {
     res.status(r.status).send(r.data);
   } catch (err) {
     console.error("Proxy error:", err.message);
+    if (err.response) {
+      console.error("Response data:", err.response.data);
+      console.error("Response status:", err.response.status);
+      console.error("Response headers:", err.response.headers);
+    } else if (err.request) {
+      console.error("No response received:", err.request);
+    } else {
+      console.error("Error en configuración:", err.config);
+    }
     res.status(500).send("Error en el proxy: " + err.message);
   }
 });
