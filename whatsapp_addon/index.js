@@ -7,13 +7,14 @@ app.use(bodyParser.json());
 
 const LOCAL_NODE_URL = "http://frigate.local:3000/sendMessage";
 
-// Home Assistant
-const HA_URL = "http://homeassistant.local:8123";
-const HA_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJjZTBlMmZjMDViYWQ0YTE3OTkzOTFhZTk5NjU5OTViZCIsImlhdCI6MTY5OTY2MDQ5NywiZXhwIjoyMDE1MDIwNDk3fQ.iANUSoRulzzlDNWwifdtAuvzzg-I0QG3Dp8aggy-yjw";
+// Home Assistant - usando el token inyectado por el supervisor
+const SUPERVISOR_TOKEN = process.env.SUPERVISOR_TOKEN;
+const HA_API_URL = "http://supervisor/core/api";
 
 const sendNotificationHA = async (title, message) => {
   try {
-    await axios.post(`${HA_URL}/api/services/persistent_notification/create`,
+    await axios.post(
+      `${HA_API_URL}/services/persistent_notification/create`,
       {
         title,
         message,
@@ -22,7 +23,7 @@ const sendNotificationHA = async (title, message) => {
       {
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${HA_TOKEN}`
+          Authorization: `Bearer ${SUPERVISOR_TOKEN}`
         }
       }
     );
