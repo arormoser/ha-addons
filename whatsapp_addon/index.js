@@ -5,13 +5,40 @@ const bodyParser = require("body-parser");
 const app = express();
 app.use(bodyParser.json());
 
-const LOCAL_NODE_URL = "http://frigate.local:3000/sendMessage"; // Cambia esto por la IP si hace falta
+const LOCAL_NODE_URL = "http://frigate.local:3000/sendMessage";
+const HA_EVENT_URL = "http://supervisor/core/api/events/whatsapp_proxy_error";
+
+const sendHAEvent = async (message) => {
+  try {
+    await axios.post(
+      HA_EVENT_URL,
+      { message },
+      {
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${process.env.SUPERVISOR_TOKEN}`,
+        },
+      }
+    );
+  } catch (err) {
+    console.log("⚠️ No se pudo enviar el evento a HA:", err.message);
+  }
+};
+
+const logError = (msg) => {
+  console.error(msg);
+};
+
+const notifyServiceDown = async (finalErrorMessage) => {
+  logError(finalErrorMessage);
+  await sendHAEvent(finalErrorMessage);
+};
 
 app.post("/sendMessage", async (req, res) => {
   const { to } = req.body;
 
   if (!to || to.trim() === "") {
-    console.error("❌ No se especificó teléfono destino");
+    logError("❌ No se especificó teléfono destino");
     return res.status(400).send({ error: "No se especificó teléfono destino" });
   }
 
@@ -27,7 +54,7 @@ app.post("/sendMessage", async (req, res) => {
       return res.status(r.status).send(r.data);
     } catch (err) {
       lastError = err;
-      console.error(`Proxy error (intento ${i + 1}):`, err.message);
+      logError(`Proxy error (intento ${i + 1}): ${err.message}`);
       if (i < retries - 1) {
         const wait = delays[i] || 120000;
         console.log(`Esperando ${wait / 1000}s antes del retry...`);
@@ -35,8 +62,10 @@ app.post("/sendMessage", async (req, res) => {
       }
     }
   }
-  // Si llegó aca, fallaron todos los intentos
-  console.error("Todos los retries fallaron.");
+
+  const finalMessage = `❌ WhatsApp Proxy: todos los retries fallaron.\nÚltimo error: ${lastError?.message || "desconocido"}`;
+  await notifyServiceDown(finalMessage);
+
   if (lastError && lastError.response) {
     res.status(lastError.response.status).send(lastError.response.data);
   } else {
