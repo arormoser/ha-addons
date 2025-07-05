@@ -6,22 +6,29 @@ const app = express();
 app.use(bodyParser.json());
 
 const LOCAL_NODE_URL = "http://frigate.local:3000/sendMessage";
-const HA_EVENT_URL = "http://supervisor/core/api/events/whatsapp_proxy_error";
 
-const sendHAEvent = async (message) => {
+// Home Assistant
+const HA_URL = "http://homeassistant.local:8123";
+const HA_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJjZTBlMmZjMDViYWQ0YTE3OTkzOTFhZTk5NjU5OTViZCIsImlhdCI6MTY5OTY2MDQ5NywiZXhwIjoyMDE1MDIwNDk3fQ.iANUSoRulzzlDNWwifdtAuvzzg-I0QG3Dp8aggy-yjw";
+
+const sendNotificationHA = async (title, message) => {
   try {
-    await axios.post(
-      HA_EVENT_URL,
-      { message },
+    await axios.post(`${HA_URL}/api/services/persistent_notification/create`,
+      {
+        title,
+        message,
+        notification_id: "alerta_whatsapp"
+      },
       {
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${process.env.SUPERVISOR_TOKEN}`,
-        },
+          Authorization: `Bearer ${HA_TOKEN}`
+        }
       }
     );
+    console.log("✅ Notificación enviada a Home Assistant");
   } catch (err) {
-    console.log("⚠️ No se pudo enviar el evento a HA:", err.message);
+    console.log("⚠️ Error al enviar notificación a HA:", err.message);
   }
 };
 
@@ -31,7 +38,7 @@ const logError = (msg) => {
 
 const notifyServiceDown = async (finalErrorMessage) => {
   logError(finalErrorMessage);
-  await sendHAEvent(finalErrorMessage);
+  await sendNotificationHA("❌ WhatsApp Proxy", finalErrorMessage);
 };
 
 app.post("/sendMessage", async (req, res) => {
@@ -75,4 +82,5 @@ app.post("/sendMessage", async (req, res) => {
 
 app.listen(3000, () => {
   console.log("WhatsApp Proxy Addon corriendo en puerto 3000");
+  notifyServiceDown(""WhatsApp Proxy Addon corriendo en puerto 3000");
 });
