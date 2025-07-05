@@ -1,5 +1,5 @@
 name: Whatsapp
-version: "1.7.6"
+version: "1.7.7"
 slug: whatsapp_addon
 description: Whatsapp addon for send message from Home Assistant
 url: "https://github.com/arormoser/ha-addons/"
