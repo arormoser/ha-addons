@@ -82,5 +82,5 @@ app.post("/sendMessage", async (req, res) => {
 
 app.listen(3000, () => {
   console.log("WhatsApp Proxy Addon corriendo en puerto 3000");
-  notifyServiceDown(""WhatsApp Proxy Addon corriendo en puerto 3000");
+  notifyServiceDown("WhatsApp Proxy Addon corriendo en puerto 3000");
 });
