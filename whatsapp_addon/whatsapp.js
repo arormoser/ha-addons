@@ -20,12 +20,10 @@ const MessageType = {
 class WhatsappClient extends EventEmitter {
   #conn;
   #path;
-  #refreshInterval;
   #sendPresenceUpdateInterval;
   #timeout;
   #attempts;
   #offline;
-  #refreshMs;
 
   #status = {
     attempt: 0,
@@ -34,21 +32,17 @@ class WhatsappClient extends EventEmitter {
     reconnecting: false,
   };
 
-  #toMilliseconds = (hrs, min, sec) => (hrs * 60 * 60 + min * 60 + sec) * 1000;
-
   constructor({
     path,
     timeout = 1e3,
     attempts = Infinity,
     offline = true,
-    refreshMs,
   }) {
     super();
     this.#path = path;
     this.#timeout = timeout;
     this.#attempts = attempts;
     this.#offline = offline;
-    this.#refreshMs = refreshMs || this.#toMilliseconds(6, 0, 0);
     this.connect();
   }
 
@@ -65,8 +59,18 @@ class WhatsappClient extends EventEmitter {
       markOnlineOnConnect: !this.#offline,
       logger: require("pino")({ level: "silent" }),
       generateHighQualityLinkPreview: true,
-      browser: ["Ubuntu", "Chrome", "20.0.04"],
+      browser: ["Ubuntu", "Chrome", "20.04"],
       defaultQueryTimeoutMs: undefined,
+    });
+
+    // 🔴 CRITICAL: exit process on invalid crypto session
+    this.#conn.ev.on("connection.update", ({ lastDisconnect }) => {
+      const code = lastDisconnect?.error?.output?.statusCode;
+
+      if ([500, 515, 411].includes(code)) {
+        console.error("Fatal WhatsApp session error, exiting:", code);
+        process.exit(1);
+      }
     });
 
     this.#conn.ev.on("creds.update", (state) => {
@@ -76,26 +80,16 @@ class WhatsappClient extends EventEmitter {
           name: state.me.name,
         });
       }
-
       saveCreds(state);
     });
 
     this.#conn.ev.on("connection.update", this.#onConnectionUpdate);
   };
 
-  disconnect = (reconnect) => {
-    if (this.#status.disconnected) return;
-
+  disconnect = () => {
     this.#status.connected = false;
-    this.#status.disconnected = !reconnect;
-    this.#status.reconnecting = !!reconnect;
-
-    return this.#conn.end();
-  };
-
-  restart = () => {
-    this.emit("restart");
-    return this.disconnect(true);
+    this.#status.disconnected = true;
+    return this.#conn?.end();
   };
 
   #toId = (phone) => {
@@ -111,41 +105,28 @@ class WhatsappClient extends EventEmitter {
     }`;
   };
 
-  #reconnect = () => {
-    if (this.#status.attempt++ > this.#attempts || this.#status.disconnected) {
-      this.#status.reconnecting = false;
-      this.#status.disconnected = true;
-      return;
-    }
-
-    setTimeout(this.connect, this.#timeout);
-  };
-
   #onConnectionUpdate = (event) => {
-    if (event.qr) this.#onQr(event.qr);
-    if (event.connection === "open") this.#onConnected(event);
+    if (event.qr) this.emit("qr", event.qr);
+    if (event.connection === "open") this.#onConnected();
     else if (event.connection === "close") this.#onDisconnected(event);
   };
 
-  #onQr = (qr) => {
-    this.emit("qr", qr);
-  };
-
-  #onConnected = (event) => {
-    this.#status.attempt = 0;
+  #onConnected = () => {
     this.#status.connected = true;
     this.#status.disconnected = false;
     this.#status.reconnecting = false;
 
-    this.#refreshInterval = setInterval(() => this.restart(), this.#refreshMs);
     if (this.#offline) this.setSendPresenceUpdateInterval("unavailable");
 
+    // ✅ SAFE messages handler (no out-of-order corruption)
     this.#conn.ev.on("messages.upsert", async ({ messages }) => {
-      const msg = messages[0];
+      for (const msg of messages) {
+        if (!msg.message) continue;
+        if (msg.key.fromMe) continue;
 
-      if (msg.hasOwnProperty("message") && !msg.key.fromMe) {
         delete msg.message.messageContextInfo;
         const messageType = Object.keys(msg.message)[0];
+
         this.emit("msg", { type: messageType, ...msg });
       }
     });
@@ -159,158 +140,70 @@ class WhatsappClient extends EventEmitter {
 
   #onDisconnected = ({ lastDisconnect }) => {
     this.#status.connected = false;
-
-    clearInterval(this.#refreshInterval);
-    this.setSendPresenceUpdateInterval();
+    clearInterval(this.#sendPresenceUpdateInterval);
 
     const statusCode = lastDisconnect?.error?.output?.statusCode;
 
     if (statusCode === DisconnectReason.loggedOut) {
-      this.#status.reconnecting = false;
-      this.#status.disconnected = true;
-
       this.emit("logout");
       return;
     }
 
+    // ❗ DO NOT reconnect here – let HA restart clean
     this.emit("disconnected", statusCode);
-    this.#reconnect();
   };
 
   setSendPresenceUpdateInterval = (status, id) => {
     clearInterval(this.#sendPresenceUpdateInterval);
 
-    if (status) {
+    if (!status) return;
+
+    this.#sendPresenceUpdateInterval = setInterval(() => {
       try {
         this.sendPresenceUpdate(status, id);
-      } catch (err) {
-        clearInterval(this.#sendPresenceUpdateInterval);
-      }
-
-      this.#sendPresenceUpdateInterval = setInterval(() => {
-        try {
-          this.sendPresenceUpdate(status, id);
-        } catch (err) {
-          clearInterval(this.#sendPresenceUpdateInterval);
-        }
-      }, 10000);
-    }
+      } catch (_) {}
+    }, 10000);
   };
 
   sendMessage = async (phone, msg, options) => {
-    phone = phone.toString();
-    if (this.#status.disconnected || !this.#status.connected) {
+    if (!this.#status.connected) {
       throw new WhatsappDisconnectedError();
     }
 
     const id = this.#toId(phone);
-
     const [result] = await this.#conn.onWhatsApp(id);
 
-    if (
-      result ||
-      phone.endsWith("@s.whatsapp.net") ||
-      phone.endsWith("@g.us") ||
-      phone.endsWith("@broadcast")
-    ) {
-      try {
-        return await this.#conn.sendMessage(id, msg, options);
-      } catch (err) {
-        throw new WhatsappError(err.output.payload.statusCode);
-      }
+    if (result) {
+      return await this.#conn.sendMessage(id, msg, options);
     }
 
     throw new WhatsappNumberNotFoundError(phone);
   };
 
-  waitForMessage(from, callback) {
-    this.once("msg", (msg) => {
-      if (msg.key.remoteJid === this.#toId(from)) callback(msg);
-    });
-  }
-
   sendPresenceUpdate = async (type, id) => {
-    if (this.#status.disconnected || !this.#status.connected) {
+    if (!this.#status.connected) {
       throw new WhatsappDisconnectedError();
     }
 
-    try {
-      await this.#conn.sendPresenceUpdate(type, id);
-    } catch (err) {
-      throw new WhatsappError(err.output.payload.statusCode);
-    }
-  };
-
-  presenceSubscribe = async (phone) => {
-    if (this.#status.disconnected || !this.#status.connected) {
-      throw new WhatsappDisconnectedError();
-    }
-
-    const id = this.#toId(phone);
-
-    const [result] = await this.#conn.onWhatsApp(id);
-
-    if (result) {
-      try {
-        await this.#conn.presenceSubscribe(id);
-      } catch (err) {
-        throw new WhatsappError(err.output.payload.statusCode);
-      }
-    } else {
-      throw new WhatsappNumberNotFoundError(phone);
-    }
-  };
-
-  updateProfileStatus = async (status) => {
-    if (this.#status.disconnected || !this.#status.connected) {
-      throw new WhatsappDisconnectedError();
-    }
-
-    try {
-      await this.#conn.updateProfileStatus(status);
-    } catch (err) {
-      throw new WhatsappError(err.output.payload.statusCode);
-    }
+    await this.#conn.sendPresenceUpdate(type, id);
   };
 }
 
 class WhatsappNumberNotFoundError extends Error {
-  constructor(phone = "", ...args) {
-    super(phone, ...args);
+  constructor(phone = "") {
+    super();
     this.name = "WhatsappNumberNotFoundError";
-    this.message = `Send message failed. Number ${phone} is not on Whatsapp.`;
     this.code = 404;
+    this.message = `Send message failed. Number ${phone} is not on Whatsapp.`;
   }
 }
 
 class WhatsappDisconnectedError extends Error {
-  constructor(message = "", ...args) {
-    super(message, ...args);
+  constructor() {
+    super();
     this.name = "WhatsappDisconnectedError";
     this.code = 401;
-    this.message = `Send message failed. Whatsapp disconnected error.`;
-  }
-}
-
-class WhatsappError extends Error {
-  #errors = {
-    428: "Connection Closed",
-    408: "Connection Lost",
-    440: "Connection Replaced",
-    408: "Timed Out",
-    401: "Logged Out",
-    500: "Bad Session",
-    515: "Restart Required",
-    411: "Multidevice Mismatch",
-  };
-
-  constructor(message = "", ...args) {
-    super(message, ...args);
-    this.name = "WhatsappError";
-    this.code = Number(this.message);
-    this.message = `Send message failed. Whatsapp error ${this.message}: ${
-      this.#errors[this.code]
-    }`;
+    this.message = `Send message failed. Whatsapp disconnected.`;
   }
 }
 
