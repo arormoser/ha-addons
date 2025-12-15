@@ -165,20 +165,27 @@ class WhatsappClient extends EventEmitter {
     }, 10000);
   };
 
-  sendMessage = async (phone, msg, options) => {
-    if (!this.#status.connected) {
-      throw new WhatsappDisconnectedError();
-    }
+    sendMessage = async (phone, msg, options) => {
+      if (!this.#status.connected) {
+        throw new WhatsappDisconnectedError();
+      }
 
-    const id = this.#toId(phone);
-    const [result] = await this.#conn.onWhatsApp(id);
+      const id = this.#toId(phone);
 
-    if (result) {
-      return await this.#conn.sendMessage(id, msg, options);
-    }
+      // 👇 GRUPOS: enviar directo
+      if (id.endsWith("@g.us")) {
+        return await this.#conn.sendMessage(id, msg, options);
+      }
 
-    throw new WhatsappNumberNotFoundError(phone);
-  };
+      // 👇 NUMEROS: validar existencia
+      const [result] = await this.#conn.onWhatsApp(id);
+
+      if (result) {
+        return await this.#conn.sendMessage(id, msg, options);
+      }
+
+      throw new WhatsappNumberNotFoundError(phone);
+    };
 
   sendPresenceUpdate = async (type, id) => {
     if (!this.#status.connected) {
