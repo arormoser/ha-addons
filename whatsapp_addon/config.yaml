@@ -1,0 +1,23 @@
+name: Whatsapp
+version: "1.5.1"
+slug: whatsapp_addon
+description: Whatsapp addon for send message from Home Assistant
+url: "https://github.com/ShaylenIT/ha-whatsapp-addon/tree/main/whatsapp_addon"
+homeassistant_api: true
+hassio_api: true
+arch:
+  - armhf
+  - armv7
+  - aarch64
+  - amd64
+  - i386
+init: false
+map:
+  - config:rw
+  - media:rw # Added support for send media from /media folder
+options:
+  clients:
+    - default
+schema:
+  clients:
+    - str

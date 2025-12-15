@@ -1,0 +1,23 @@
+{
+  "name": "whatsapp_hass_addon",
+  "version": "1.5.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node ./index.js"
+  },
+  "author": "Giuseppe Castaldo",
+  "license": "ISC",
+  "dependencies": {
+    "axios": "^0.27.2",
+    "body-parser": "^1.20.0",
+    "cors": "^2.8.5",
+    "eventemitter2": "^6.4.9",
+    "events": "^3.3.0",
+    "express": "^4.18.1",
+    "log4js": ">=6.4.0",
+    "pino": "^8.4.2",
+    "qr-image": "^3.2.0"
+  }
+}
