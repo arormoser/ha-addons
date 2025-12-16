@@ -59,7 +59,7 @@ class WhatsappClient extends EventEmitter {
       markOnlineOnConnect: !this.#offline,
       logger: require("pino")({ level: "silent" }),
       generateHighQualityLinkPreview: true,
-      browser: ["Ubuntu", "Chrome", "20.04"],
+      browser: ["WhatsApp", "Chrome", "109.0.0.0"],
       defaultQueryTimeoutMs: undefined,
     });
 
