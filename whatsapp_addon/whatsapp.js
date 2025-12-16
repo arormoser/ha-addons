@@ -26,10 +26,8 @@ class WhatsappClient extends EventEmitter {
   #offline;
 
   #status = {
-    attempt: 0,
     connected: false,
     disconnected: false,
-    reconnecting: false,
   };
 
   constructor({
@@ -56,17 +54,17 @@ class WhatsappClient extends EventEmitter {
       version,
       auth: state,
       syncFullHistory: false,
-      markOnlineOnConnect: !this.#offline,
+      shouldIgnoreJid: () => true, // 🔥 CLAVE: ignora TODO lo entrante
+      markOnlineOnConnect: false,
       logger: require("pino")({ level: "silent" }),
       generateHighQualityLinkPreview: true,
-      browser: ["WhatsApp", "Chrome", "109.0.0.0"],
+      browser: ["Chrome", "Windows", "120.0.0.0"],
       defaultQueryTimeoutMs: undefined,
     });
 
-    // 🔴 CRITICAL: exit process on invalid crypto session
+    // 🔴 Cortar proceso ante sesion criptografica invalida
     this.#conn.ev.on("connection.update", ({ lastDisconnect }) => {
       const code = lastDisconnect?.error?.output?.statusCode;
-
       if ([500, 515, 411].includes(code)) {
         console.error("Fatal WhatsApp session error, exiting:", code);
         process.exit(1);
@@ -89,6 +87,7 @@ class WhatsappClient extends EventEmitter {
   disconnect = () => {
     this.#status.connected = false;
     this.#status.disconnected = true;
+    clearInterval(this.#sendPresenceUpdateInterval);
     return this.#conn?.end();
   };
 
@@ -97,65 +96,46 @@ class WhatsappClient extends EventEmitter {
     if (!phone) throw new Error("Invalid phone");
 
     return `${phone.replace("+", "")}${
-      !phone.endsWith("@s.whatsapp.net") &&
-      !phone.endsWith("@g.us") &&
-      !phone.endsWith("@broadcast")
-        ? "@s.whatsapp.net"
-        : ""
+      phone.endsWith("@s.whatsapp.net") ||
+      phone.endsWith("@g.us") ||
+      phone.endsWith("@broadcast")
+        ? ""
+        : "@s.whatsapp.net"
     }`;
   };
 
   #onConnectionUpdate = (event) => {
     if (event.qr) this.emit("qr", event.qr);
-    if (event.connection === "open") this.#onConnected();
-    else if (event.connection === "close") this.#onDisconnected(event);
-  };
 
-  #onConnected = () => {
-    this.#status.connected = true;
-    this.#status.disconnected = false;
-    this.#status.reconnecting = false;
+    if (event.connection === "open") {
+      this.#status.connected = true;
+      this.#status.disconnected = false;
 
-    if (this.#offline) this.setSendPresenceUpdateInterval("unavailable");
-
-    // ✅ SAFE messages handler (no out-of-order corruption)
-    this.#conn.ev.on("messages.upsert", async ({ messages }) => {
-      for (const msg of messages) {
-        if (!msg.message) continue;
-        if (msg.key.fromMe) continue;
-
-        delete msg.message.messageContextInfo;
-        const messageType = Object.keys(msg.message)[0];
-
-        this.emit("msg", { type: messageType, ...msg });
+      if (this.#offline) {
+        this.setSendPresenceUpdateInterval("unavailable");
       }
-    });
 
-    this.#conn.ev.on("presence.update", (presence) => {
-      this.emit("presence_update", presence);
-    });
-
-    this.emit("ready");
-  };
-
-  #onDisconnected = ({ lastDisconnect }) => {
-    this.#status.connected = false;
-    clearInterval(this.#sendPresenceUpdateInterval);
-
-    const statusCode = lastDisconnect?.error?.output?.statusCode;
-
-    if (statusCode === DisconnectReason.loggedOut) {
-      this.emit("logout");
-      return;
+      this.emit("ready");
     }
 
-    // ❗ DO NOT reconnect here – let HA restart clean
-    this.emit("disconnected", statusCode);
+    if (event.connection === "close") {
+      this.#status.connected = false;
+      clearInterval(this.#sendPresenceUpdateInterval);
+
+      const statusCode = event.lastDisconnect?.error?.output?.statusCode;
+
+      if (statusCode === DisconnectReason.loggedOut) {
+        this.emit("logout");
+        return;
+      }
+
+      // ❗ NO reconectar aca: HA reinicia el addon limpio
+      this.emit("disconnected", statusCode);
+    }
   };
 
   setSendPresenceUpdateInterval = (status, id) => {
     clearInterval(this.#sendPresenceUpdateInterval);
-
     if (!status) return;
 
     this.#sendPresenceUpdateInterval = setInterval(() => {
@@ -165,33 +145,32 @@ class WhatsappClient extends EventEmitter {
     }, 10000);
   };
 
-    sendMessage = async (phone, msg, options) => {
-      if (!this.#status.connected) {
-        throw new WhatsappDisconnectedError();
-      }
+  sendMessage = async (phone, msg, options) => {
+    if (!this.#status.connected) {
+      throw new WhatsappDisconnectedError();
+    }
 
-      const id = this.#toId(phone);
+    const id = this.#toId(phone);
 
-      // 👇 GRUPOS: enviar directo
-      if (id.endsWith("@g.us")) {
-        return await this.#conn.sendMessage(id, msg, options);
-      }
+    // 👇 GRUPOS: enviar directo
+    if (id.endsWith("@g.us")) {
+      return await this.#conn.sendMessage(id, msg, options);
+    }
 
-      // 👇 NUMEROS: validar existencia
-      const [result] = await this.#conn.onWhatsApp(id);
+    // 👇 NUMEROS: validar existencia
+    const [result] = await this.#conn.onWhatsApp(id);
 
-      if (result) {
-        return await this.#conn.sendMessage(id, msg, options);
-      }
+    if (result) {
+      return await this.#conn.sendMessage(id, msg, options);
+    }
 
-      throw new WhatsappNumberNotFoundError(phone);
-    };
+    throw new WhatsappNumberNotFoundError(phone);
+  };
 
   sendPresenceUpdate = async (type, id) => {
     if (!this.#status.connected) {
       throw new WhatsappDisconnectedError();
     }
-
     await this.#conn.sendPresenceUpdate(type, id);
   };
 }
