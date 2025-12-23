@@ -1,3 +1,5 @@
+## 1.0.8
+- Payload normalized for Baileys
 ## 1.0.6
 - log added
 - remove reading messages to avoid Sync Alert on iPhone
