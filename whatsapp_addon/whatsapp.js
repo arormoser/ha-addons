@@ -182,6 +182,16 @@ class WhatsappClient extends EventEmitter {
     }
 
     const id = this.#toId(phone);
+
+    const text =
+      typeof msg === "string"
+        ? msg
+        : typeof msg?.text === "string"
+        ? msg.text
+        : JSON.stringify(msg);
+
+    console.log(`[WHATSAPP SEND] to=${id} text=${text}`);
+
     const [result] = await this.#conn.onWhatsApp(id);
 
     if (
