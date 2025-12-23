@@ -182,15 +182,26 @@ class WhatsappClient extends EventEmitter {
     }
 
     const id = this.#toId(phone);
+    // ✅ normalizar payload para Baileys
+    let payload = msg;
 
-    const text =
-      typeof msg === "string"
-        ? msg
-        : typeof msg?.text === "string"
-        ? msg.text
-        : JSON.stringify(msg);
+    // si viene string/numero/etc -> convertir a { text: "..." }
+    if (payload == null || typeof payload !== "object") {
+      payload = { text: String(payload ?? "") };
+    } else {
+      // si viene { text: <no-string> } -> forzar string
+      if ("text" in payload && typeof payload.text !== "string") {
+        payload = { ...payload, text: String(payload.text) };
+      }
+    }
 
-    console.log(`[WHATSAPP SEND] to=${id} text=${text}`);
+    // log (siempre string)
+    const logText =
+      typeof payload.text === "string"
+        ? payload.text
+        : JSON.stringify(payload);
+
+    console.log(`[WHATSAPP SEND] to=${id} text=${logText}`);
 
     const [result] = await this.#conn.onWhatsApp(id);
 
@@ -200,7 +211,7 @@ class WhatsappClient extends EventEmitter {
       phone.endsWith("@g.us") ||
       phone.endsWith("@broadcast")
     ) {
-      return await this.#conn.sendMessage(id, msg, options);
+      return await this.#conn.sendMessage(id, payload, options);
     }
 
     throw new WhatsappNumberNotFoundError(phone);
