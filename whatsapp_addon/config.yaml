@@ -1,5 +1,5 @@
 name: Whatsapp Stable
-version: "1.0.7"
+version: "1.0.8"
 slug: whatsapp_stable
 description: Stable WhatsApp add-on for Home Assistant
 url: "https://github.com/arormoser/ha-addons/tree/main/whatsapp_addon"
