@@ -7,21 +7,48 @@ const {
   fetchLatestBaileysVersion,
 } = require("./Baileys");
 
+const MessageType = {
+  text: "conversation",
+  location: "locationMessage",
+  liveLocation: "liveLocationMessage",
+  image: "imageMessage",
+  video: "videoMessage",
+  document: "documentMessage",
+  contact: "contactMessage",
+};
+
 class WhatsappClient extends EventEmitter {
   #conn;
   #path;
+  #refreshInterval;
+  #sendPresenceUpdateInterval;
+  #timeout;
+  #attempts;
   #offline;
-  #keepAliveInterval;
+  #refreshMs;
 
   #status = {
+    attempt: 0,
     connected: false,
     disconnected: false,
+    reconnecting: false,
   };
 
-  constructor({ path, offline = true }) {
+  #toMilliseconds = (hrs, min, sec) => (hrs * 60 * 60 + min * 60 + sec) * 1000;
+
+  constructor({
+    path,
+    timeout = 1e3,
+    attempts = Infinity,
+    offline = true,
+    refreshMs,
+  }) {
     super();
     this.#path = path;
+    this.#timeout = timeout;
+    this.#attempts = attempts;
     this.#offline = offline;
+    this.#refreshMs = refreshMs || this.#toMilliseconds(6, 0, 0);
     this.connect();
   }
 
@@ -35,69 +62,165 @@ class WhatsappClient extends EventEmitter {
       version,
       auth: state,
       syncFullHistory: false,
-      shouldIgnoreJid: () => true,
-      markOnlineOnConnect: false,
+      shouldIgnoreJid: () => true, // 🔥 NO escuchar nada
+      markOnlineOnConnect: !this.#offline,
       logger: require("pino")({ level: "silent" }),
-      browser: ["Chrome", "Windows", "120.0.0.0"],
+      generateHighQualityLinkPreview: true,
+      browser: ["Ubuntu", "Chrome", "20.0.04"],
+      defaultQueryTimeoutMs: undefined,
     });
 
-    this.#conn.ev.on("creds.update", saveCreds);
+    this.#conn.ev.on("creds.update", (state) => {
+      if (state.me) {
+        this.emit("pair", {
+          phone: state.me.id.split(":")[0],
+          name: state.me.name,
+        });
+      }
+      saveCreds(state);
+    });
+
     this.#conn.ev.on("connection.update", this.#onConnectionUpdate);
   };
 
-  #onConnectionUpdate = (event) => {
-    if (event.qr) this.emit("qr", event.qr);
+  disconnect = (reconnect) => {
+    if (this.#status.disconnected) return;
 
-    if (event.connection === "open") {
-      this.#status.connected = true;
-      this.#status.disconnected = false;
+    this.#status.connected = false;
+    this.#status.disconnected = !reconnect;
+    this.#status.reconnecting = !!reconnect;
 
-      this.#startKeepAlive();
-      this.emit("ready");
-    }
-
-    if (event.connection === "close") {
-      this.#status.connected = false;
-      clearInterval(this.#keepAliveInterval);
-
-      const code = event.lastDisconnect?.error?.output?.statusCode;
-      if (code === DisconnectReason.loggedOut) {
-        this.emit("logout");
-        return;
-      }
-
-      this.#status.disconnected = true;
-      this.emit("disconnected", code);
-    }
+    return this.#conn.end();
   };
 
-  #startKeepAlive = () => {
-    clearInterval(this.#keepAliveInterval);
-
-    this.#keepAliveInterval = setInterval(() => {
-      try {
-        if (this.#conn?.ws?.readyState === 1) {
-          this.#conn.ws.ping();
-        }
-      } catch (_) {}
-    }, 5 * 60 * 1000); // cada 5 minutos
+  restart = () => {
+    this.emit("restart");
+    return this.disconnect(true);
   };
 
   #toId = (phone) => {
     phone = phone.toString();
-    return phone.includes("@") ? phone : `${phone}@s.whatsapp.net`;
+    if (!phone) throw new Error("Invalid phone");
+
+    return `${phone.replace("+", "")}${
+      !phone.endsWith("@s.whatsapp.net") &&
+      !phone.endsWith("@g.us") &&
+      !phone.endsWith("@broadcast")
+        ? "@s.whatsapp.net"
+        : ""
+    }`;
   };
 
+  #reconnect = () => {
+    if (this.#status.attempt++ > this.#attempts || this.#status.disconnected) {
+      this.#status.reconnecting = false;
+      this.#status.disconnected = true;
+      return;
+    }
+
+    setTimeout(this.connect, this.#timeout);
+  };
+
+  #onConnectionUpdate = (event) => {
+    if (event.qr) this.emit("qr", event.qr);
+    if (event.connection === "open") this.#onConnected();
+    else if (event.connection === "close") this.#onDisconnected(event);
+  };
+
+  #onConnected = () => {
+    this.#status.attempt = 0;
+    this.#status.connected = true;
+    this.#status.disconnected = false;
+    this.#status.reconnecting = false;
+
+    this.#refreshInterval = setInterval(
+      () => this.restart(),
+      this.#refreshMs
+    );
+
+    if (this.#offline) this.setSendPresenceUpdateInterval("unavailable");
+
+    this.emit("ready");
+  };
+
+  #onDisconnected = ({ lastDisconnect }) => {
+    this.#status.connected = false;
+
+    clearInterval(this.#refreshInterval);
+    this.setSendPresenceUpdateInterval();
+
+    const statusCode = lastDisconnect?.error?.output?.statusCode;
+
+    if (statusCode === DisconnectReason.loggedOut) {
+      this.#status.reconnecting = false;
+      this.#status.disconnected = true;
+      this.emit("logout");
+      return;
+    }
+
+    this.emit("disconnected", statusCode);
+    this.#reconnect();
+  };
+
+  setSendPresenceUpdateInterval = (status, id) => {
+    clearInterval(this.#sendPresenceUpdateInterval);
+
+    if (!status) return;
+
+    this.#sendPresenceUpdateInterval = setInterval(() => {
+      try {
+        this.sendPresenceUpdate(status, id);
+      } catch (_) {}
+    }, 10000);
+  };
+
+  // 🚫 NO SE TOCA
   sendMessage = async (phone, msg, options) => {
-    if (!this.#status.connected) {
-      // 🔄 reconexion lazy
-      await this.connect();
-      await new Promise(r => setTimeout(r, 1500));
+    phone = phone.toString();
+    if (this.#status.disconnected || !this.#status.connected) {
+      throw new WhatsappDisconnectedError();
     }
 
     const id = this.#toId(phone);
-    return await this.#conn.sendMessage(id, msg, options);
+    const [result] = await this.#conn.onWhatsApp(id);
+
+    if (
+      result ||
+      phone.endsWith("@s.whatsapp.net") ||
+      phone.endsWith("@g.us") ||
+      phone.endsWith("@broadcast")
+    ) {
+      return await this.#conn.sendMessage(id, msg, options);
+    }
+
+    throw new WhatsappNumberNotFoundError(phone);
+  };
+
+  sendPresenceUpdate = async (type, id) => {
+    if (this.#status.disconnected || !this.#status.connected) {
+      throw new WhatsappDisconnectedError();
+    }
+
+    await this.#conn.sendPresenceUpdate(type, id);
   };
 }
 
-module.exports = { WhatsappClient };
+class WhatsappNumberNotFoundError extends Error {
+  constructor(phone = "", ...args) {
+    super(phone, ...args);
+    this.name = "WhatsappNumberNotFoundError";
+    this.message = `Send message failed. Number ${phone} is not on Whatsapp.`;
+    this.code = 404;
+  }
+}
+
+class WhatsappDisconnectedError extends Error {
+  constructor(message = "", ...args) {
+    super(message, ...args);
+    this.name = "WhatsappDisconnectedError";
+    this.code = 401;
+    this.message = `Send message failed. Whatsapp disconnected error.`;
+  }
+}
+
+module.exports = { WhatsappClient, MessageType };
