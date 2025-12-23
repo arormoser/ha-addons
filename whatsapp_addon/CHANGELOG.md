@@ -1,3 +1,6 @@
+## 1.0.6
+- log added
+- remove reading messages to avoid Sync Alert on iPhone
 ## 1.5.1
 
 - Updated Baileys to V6.7.18
